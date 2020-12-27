@@ -2457,14 +2457,6 @@ bgp_attr_parse_ret_t bgp_attr_parse(struct peer *peer, struct attr *attr,
 	while (BGP_INPUT_PNT(peer) < endp) {
 		/* Check remaining length check.*/
 		if (endp - BGP_INPUT_PNT(peer) < BGP_ATTR_MIN_LEN) {
-			/* XXX warning: long int format, int arg (arg 5) */
-			flog_warn(
-				EC_BGP_ATTRIBUTE_TOO_SMALL,
-				"%s: error BGP attribute length %lu is smaller than min len",
-				peer->host,
-				(unsigned long)(endp
-						- stream_pnt(BGP_INPUT(peer))));
-
 			bgp_notify_send(peer, BGP_NOTIFY_UPDATE_ERR,
 					BGP_NOTIFY_UPDATE_ATTR_LENG_ERR);
 			ret = BGP_ATTR_PARSE_ERROR;
@@ -2482,13 +2474,6 @@ bgp_attr_parse_ret_t bgp_attr_parse(struct peer *peer, struct attr *attr,
 		/* Check whether Extended-Length applies and is in bounds */
 		if (CHECK_FLAG(flag, BGP_ATTR_FLAG_EXTLEN)
 		    && ((endp - startp) < (BGP_ATTR_MIN_LEN + 1))) {
-			flog_warn(
-				EC_BGP_EXT_ATTRIBUTE_TOO_SMALL,
-				"%s: Extended length set, but just %lu bytes of attr header",
-				peer->host,
-				(unsigned long)(endp
-						- stream_pnt(BGP_INPUT(peer))));
-
 			bgp_notify_send(peer, BGP_NOTIFY_UPDATE_ERR,
 					BGP_NOTIFY_UPDATE_ATTR_LENG_ERR);
 			ret = BGP_ATTR_PARSE_ERROR;
@@ -2506,11 +2491,6 @@ bgp_attr_parse_ret_t bgp_attr_parse(struct peer *peer, struct attr *attr,
 		   List. */
 
 		if (CHECK_BITMAP(seen, type)) {
-			flog_warn(
-				EC_BGP_ATTRIBUTE_REPEATED,
-				"%s: error BGP attribute type %d appears twice in a message",
-				peer->host, type);
-
 			bgp_notify_send(peer, BGP_NOTIFY_UPDATE_ERR,
 					BGP_NOTIFY_UPDATE_MAL_ATTR);
 			ret = BGP_ATTR_PARSE_ERROR;
@@ -2526,11 +2506,6 @@ bgp_attr_parse_ret_t bgp_attr_parse(struct peer *peer, struct attr *attr,
 		attr_endp = BGP_INPUT_PNT(peer) + length;
 
 		if (attr_endp > endp) {
-			flog_warn(
-				EC_BGP_ATTRIBUTE_TOO_LARGE,
-				"%s: BGP type %d length %d is too large, attribute total length is %d.  attr_endp is %p.  endp is %p",
-				peer->host, type, length, size, attr_endp,
-				endp);
 			/*
 			 * RFC 4271 6.3
 			 * If any recognized attribute has an Attribute
@@ -2652,9 +2627,6 @@ bgp_attr_parse_ret_t bgp_attr_parse(struct peer *peer, struct attr *attr,
 		case BGP_ATTR_EXT_COMMUNITIES:
 			ret = bgp_attr_ext_communities(&attr_args);
 			break;
-#if ENABLE_BGP_VNC_ATTR
-		case BGP_ATTR_VNC:
-#endif
 		case BGP_ATTR_ENCAP:
 			ret = bgp_attr_encap(type, peer, length, attr, flag,
 					     startp);
@@ -2683,24 +2655,15 @@ bgp_attr_parse_ret_t bgp_attr_parse(struct peer *peer, struct attr *attr,
 		}
 
 		if (ret == BGP_ATTR_PARSE_ERROR) {
-			flog_warn(EC_BGP_ATTRIBUTE_PARSE_ERROR,
-				  "%s: Attribute %s, parse error", peer->host,
-				  lookup_msg(attr_str, type, NULL));
 			goto done;
 		}
+
 		if (ret == BGP_ATTR_PARSE_WITHDRAW) {
-			flog_warn(
-				EC_BGP_ATTRIBUTE_PARSE_WITHDRAW,
-				"%s: Attribute %s, parse error - treating as withdrawal",
-				peer->host, lookup_msg(attr_str, type, NULL));
 			goto done;
 		}
 
 		/* Check the fetched length. */
 		if (BGP_INPUT_PNT(peer) != attr_endp) {
-			flog_warn(EC_BGP_ATTRIBUTE_FETCH_ERROR,
-				  "%s: BGP attribute %s, fetch error",
-				  peer->host, lookup_msg(attr_str, type, NULL));
 			bgp_notify_send(peer, BGP_NOTIFY_UPDATE_ERR,
 					BGP_NOTIFY_UPDATE_ATTR_LENG_ERR);
 			ret = BGP_ATTR_PARSE_ERROR;
@@ -2710,9 +2673,6 @@ bgp_attr_parse_ret_t bgp_attr_parse(struct peer *peer, struct attr *attr,
 
 	/* Check final read pointer is same as end pointer. */
 	if (BGP_INPUT_PNT(peer) != endp) {
-		flog_warn(EC_BGP_ATTRIBUTES_MISMATCH,
-			  "%s: BGP attribute %s, length mismatch", peer->host,
-			  lookup_msg(attr_str, type, NULL));
 		bgp_notify_send(peer, BGP_NOTIFY_UPDATE_ERR,
 				BGP_NOTIFY_UPDATE_ATTR_LENG_ERR);
 
@@ -2805,11 +2765,6 @@ done:
 		if (attr->encap_subtlvs)
 			attr->encap_subtlvs = encap_intern(attr->encap_subtlvs,
 							   ENCAP_SUBTLV_TYPE);
-#if ENABLE_BGP_VNC
-		if (attr->vnc_subtlvs)
-			attr->vnc_subtlvs = encap_intern(attr->vnc_subtlvs,
-							 VNC_SUBTLV_TYPE);
-#endif
 	} else {
 		if (attr->transit) {
 			transit_free(attr->transit);
@@ -2824,10 +2779,6 @@ done:
 		assert(attr->transit->refcnt > 0);
 	if (attr->encap_subtlvs)
 		assert(attr->encap_subtlvs->refcnt > 0);
-#if ENABLE_BGP_VNC
-	if (attr->vnc_subtlvs)
-		assert(attr->vnc_subtlvs->refcnt > 0);
-#endif
 
 	return ret;
 }
