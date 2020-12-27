@@ -2310,35 +2310,6 @@ static void bgp_rib_withdraw(struct bgp_node *rn, struct bgp_path_info *pi,
 			return;
 		}
 
-#if ENABLE_BGP_VNC
-	if (safi == SAFI_MPLS_VPN) {
-		struct bgp_node *prn = NULL;
-		struct bgp_table *table = NULL;
-
-		prn = bgp_node_get(peer->bgp->rib[afi][safi],
-				   (struct prefix *)prd);
-		if (bgp_node_has_bgp_path_info_data(prn)) {
-			table = bgp_node_get_bgp_table_info(prn);
-
-			vnc_import_bgp_del_vnc_host_route_mode_resolve_nve(
-				peer->bgp, prd, table, &rn->p, pi);
-		}
-		bgp_unlock_node(prn);
-	}
-	if ((afi == AFI_IP || afi == AFI_IP6) && (safi == SAFI_UNICAST)) {
-		if (CHECK_FLAG(pi->flags, BGP_PATH_SELECTED)) {
-
-			vnc_import_bgp_del_route(peer->bgp, &rn->p, pi);
-			vnc_import_bgp_exterior_del_route(peer->bgp, &rn->p,
-							  pi);
-		}
-	}
-#endif
-
-	/* If this is an EVPN route, process for un-import. */
-	if (safi == SAFI_EVPN)
-		bgp_evpn_unimport_route(peer->bgp, afi, safi, &rn->p, pi);
-
 	bgp_rib_remove(rn, pi, peer, afi, safi);
 }
 
@@ -2693,16 +2664,6 @@ int bgp_update(struct peer *peer, struct prefix *p, uint32_t addpath_id,
 
 		/* Withdraw/Announce before we fully processed the withdraw */
 		if (CHECK_FLAG(pi->flags, BGP_PATH_REMOVED)) {
-			if (bgp_debug_update(peer, p, NULL, 1)) {
-				bgp_debug_rdpfxpath2str(
-					afi, safi, prd, p, label, num_labels,
-					addpath_id ? 1 : 0, addpath_id, pfx_buf,
-					sizeof(pfx_buf));
-				zlog_debug(
-					"%s rcvd %s, flapped quicker than processing",
-					peer->host, pfx_buf);
-			}
-
 			bgp_path_info_restore(rn, pi);
 		}
 
@@ -2766,15 +2727,6 @@ int bgp_update(struct peer *peer, struct prefix *p, uint32_t addpath_id,
 			    || CHECK_FLAG(peer->flags, PEER_FLAG_IS_RFAPI_HD))
 				bgp_path_info_set_flag(rn, pi, BGP_PATH_VALID);
 			else {
-				if (BGP_DEBUG(nht, NHT)) {
-					char buf1[INET6_ADDRSTRLEN];
-					inet_ntop(AF_INET,
-						  (const void *)&attr_new
-							  ->nexthop,
-						  buf1, INET6_ADDRSTRLEN);
-					zlog_debug("%s(%s): NH unresolved",
-						   __FUNCTION__, buf1);
-				}
 				bgp_path_info_unset_flag(rn, pi,
 							 BGP_PATH_VALID);
 			}
@@ -2837,10 +2789,6 @@ int bgp_update(struct peer *peer, struct prefix *p, uint32_t addpath_id,
 	if (bgp_maximum_prefix_overflow(peer, afi, safi, 0))
 		return -1;
 
-	/* If this is an EVPN route, process for import. */
-	if (safi == SAFI_EVPN)
-		bgp_evpn_import_route(bgp, afi, safi, p, new);
-
 	hook_call(bgp_process, bgp, afi, safi, rn, peer, false);
 
 	/* Process change. */
@@ -2884,13 +2832,6 @@ int bgp_withdraw(struct peer *peer, struct prefix *p, uint32_t addpath_id,
 	struct bgp_node *rn;
 	struct bgp_path_info *pi;
 
-#if ENABLE_BGP_VNC
-	if ((SAFI_MPLS_VPN == safi) || (SAFI_ENCAP == safi)) {
-		rfapiProcessWithdraw(peer, NULL, p, prd, NULL, afi, safi, type,
-				     0);
-	}
-#endif
-
 	bgp = peer->bgp;
 
 	/* Lookup node. */
@@ -2911,16 +2852,6 @@ int bgp_withdraw(struct peer *peer, struct prefix *p, uint32_t addpath_id,
 	    && peer != bgp->peer_self)
 		if (!bgp_adj_in_unset(rn, peer, addpath_id)) {
 			peer->stat_pfx_dup_withdraw++;
-
-			if (bgp_debug_update(peer, p, NULL, 1)) {
-				bgp_debug_rdpfxpath2str(
-					afi, safi, prd, p, label, num_labels,
-					addpath_id ? 1 : 0, addpath_id, pfx_buf,
-					sizeof(pfx_buf));
-				zlog_debug(
-					"%s withdrawing route %s not in adj-in",
-					peer->host, pfx_buf);
-			}
 			bgp_unlock_node(rn);
 			return 0;
 		}
@@ -2932,15 +2863,6 @@ int bgp_withdraw(struct peer *peer, struct prefix *p, uint32_t addpath_id,
 		    && pi->addpath_rx_id == addpath_id)
 			break;
 
-	/* Logging. */
-	if (bgp_debug_update(peer, p, NULL, 1)) {
-		bgp_debug_rdpfxpath2str(afi, safi, prd, p, label, num_labels,
-					addpath_id ? 1 : 0, addpath_id, pfx_buf,
-					sizeof(pfx_buf));
-		zlog_debug("%s rcvd UPDATE about %s -- withdrawn", peer->host,
-			   pfx_buf);
-	}
-
 	/* Withdraw specified route from routing table. */
 	if (pi && !CHECK_FLAG(pi->flags, BGP_PATH_HISTORY)) {
 		bgp_rib_withdraw(rn, pi, peer, afi, safi, prd);
@@ -2949,16 +2871,6 @@ int bgp_withdraw(struct peer *peer, struct prefix *p, uint32_t addpath_id,
 			|| bgp->inst_type == BGP_INSTANCE_TYPE_DEFAULT)) {
 			vpn_leak_from_vrf_withdraw(bgp_get_default(), bgp, pi);
 		}
-		if ((SAFI_MPLS_VPN == safi)
-		    && (bgp->inst_type == BGP_INSTANCE_TYPE_DEFAULT)) {
-
-			vpn_leak_to_vrf_withdraw(bgp, pi);
-		}
-	} else if (bgp_debug_update(peer, p, NULL, 1)) {
-		bgp_debug_rdpfxpath2str(afi, safi, prd, p, label, num_labels,
-					addpath_id ? 1 : 0, addpath_id, pfx_buf,
-					sizeof(pfx_buf));
-		zlog_debug("%s Can't find the route %s", peer->host, pfx_buf);
 	}
 
 	/* Unlock bgp_node_get() lock. */
@@ -3629,10 +3541,6 @@ int bgp_nlri_parse_ip(struct peer *peer, struct attr *attr,
 
 		/* Prefix length check. */
 		if (p.prefixlen > prefix_blen(&p) * 8) {
-			flog_err(
-				EC_BGP_UPDATE_RCV,
-				"%s [Error] Update packet error (wrong prefix length %d for afi %u)",
-				peer->host, p.prefixlen, packet->afi);
 			return BGP_NLRI_PARSE_ERROR_PREFIX_LENGTH;
 		}
 
@@ -3641,20 +3549,12 @@ int bgp_nlri_parse_ip(struct peer *peer, struct attr *attr,
 
 		/* When packet overflow occur return immediately. */
 		if (pnt + psize > lim) {
-			flog_err(
-				EC_BGP_UPDATE_RCV,
-				"%s [Error] Update packet error (prefix length %d overflows packet)",
-				peer->host, p.prefixlen);
 			return BGP_NLRI_PARSE_ERROR_PACKET_OVERFLOW;
 		}
 
 		/* Defensive coding, double-check the psize fits in a struct
 		 * prefix */
 		if (psize > (ssize_t)sizeof(p.u)) {
-			flog_err(
-				EC_BGP_UPDATE_RCV,
-				"%s [Error] Update packet error (prefix length %d too large for prefix storage %zu)",
-				peer->host, p.prefixlen, sizeof(p.u));
 			return BGP_NLRI_PARSE_ERROR_PACKET_LENGTH;
 		}
 
@@ -3664,19 +3564,6 @@ int bgp_nlri_parse_ip(struct peer *peer, struct attr *attr,
 		/* Check address. */
 		if (afi == AFI_IP && safi == SAFI_UNICAST) {
 			if (IN_CLASSD(ntohl(p.u.prefix4.s_addr))) {
-				/* From RFC4271 Section 6.3:
-				 *
-				 * If a prefix in the NLRI field is semantically
-				 * incorrect
-				 * (e.g., an unexpected multicast IP address),
-				 * an error SHOULD
-				 * be logged locally, and the prefix SHOULD be
-				 * ignored.
-				 */
-				flog_err(
-					EC_BGP_UPDATE_RCV,
-					"%s: IPv4 unicast NLRI is multicast address %s, ignoring",
-					peer->host, inet_ntoa(p.u.prefix4));
 				continue;
 			}
 		}
@@ -3684,27 +3571,9 @@ int bgp_nlri_parse_ip(struct peer *peer, struct attr *attr,
 		/* Check address. */
 		if (afi == AFI_IP6 && safi == SAFI_UNICAST) {
 			if (IN6_IS_ADDR_LINKLOCAL(&p.u.prefix6)) {
-				char buf[BUFSIZ];
-
-				flog_err(
-					EC_BGP_UPDATE_RCV,
-					"%s: IPv6 unicast NLRI is link-local address %s, ignoring",
-					peer->host,
-					inet_ntop(AF_INET6, &p.u.prefix6, buf,
-						  BUFSIZ));
-
 				continue;
 			}
 			if (IN6_IS_ADDR_MULTICAST(&p.u.prefix6)) {
-				char buf[BUFSIZ];
-
-				flog_err(
-					EC_BGP_UPDATE_RCV,
-					"%s: IPv6 unicast NLRI is multicast address %s, ignoring",
-					peer->host,
-					inet_ntop(AF_INET6, &p.u.prefix6, buf,
-						  BUFSIZ));
-
 				continue;
 			}
 		}
@@ -3732,10 +3601,6 @@ int bgp_nlri_parse_ip(struct peer *peer, struct attr *attr,
 
 	/* Packet length consistency check. */
 	if (pnt != lim) {
-		flog_err(
-			EC_BGP_UPDATE_RCV,
-			"%s [Error] Update packet error (prefix length mismatch with total length)",
-			peer->host);
 		return BGP_NLRI_PARSE_ERROR_PACKET_LENGTH;
 	}
 
