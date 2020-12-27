@@ -464,132 +464,22 @@ static int bgp_path_info_cmp(struct bgp *bgp, struct bgp_path_info *new,
 	int ret = 0;
 	char new_buf[PATH_ADDPATH_STR_BUFFER];
 	char exist_buf[PATH_ADDPATH_STR_BUFFER];
-	uint32_t new_mm_seq;
-	uint32_t exist_mm_seq;
-	int nh_cmp;
 
 	*paths_eq = 0;
 
 	/* 0. Null check. */
 	if (new == NULL) {
 		*reason = bgp_path_selection_none;
-		if (debug)
-			zlog_debug("%s: new is NULL", pfx_buf);
 		return 0;
 	}
 
-	if (debug)
-		bgp_path_info_path_with_addpath_rx_str(new, new_buf);
-
 	if (exist == NULL) {
 		*reason = bgp_path_selection_first;
-		if (debug)
-			zlog_debug("%s: %s is the initial bestpath", pfx_buf,
-				   new_buf);
 		return 1;
-	}
-
-	if (debug) {
-		bgp_path_info_path_with_addpath_rx_str(exist, exist_buf);
-		zlog_debug("%s: Comparing %s flags 0x%x with %s flags 0x%x",
-			   pfx_buf, new_buf, new->flags, exist_buf,
-			   exist->flags);
 	}
 
 	newattr = new->attr;
 	existattr = exist->attr;
-
-	/* For EVPN routes, we cannot just go by local vs remote, we have to
-	 * look at the MAC mobility sequence number, if present.
-	 */
-	if (safi == SAFI_EVPN) {
-		/* This is an error condition described in RFC 7432 Section
-		 * 15.2. The RFC
-		 * states that in this scenario "the PE MUST alert the operator"
-		 * but it
-		 * does not state what other action to take. In order to provide
-		 * some
-		 * consistency in this scenario we are going to prefer the path
-		 * with the
-		 * sticky flag.
-		 */
-		if (newattr->sticky != existattr->sticky) {
-			if (!debug) {
-				prefix2str(&new->net->p, pfx_buf,
-					   sizeof(*pfx_buf)
-						   * PREFIX2STR_BUFFER);
-				bgp_path_info_path_with_addpath_rx_str(new,
-								       new_buf);
-				bgp_path_info_path_with_addpath_rx_str(
-					exist, exist_buf);
-			}
-
-			if (newattr->sticky && !existattr->sticky) {
-				*reason = bgp_path_selection_evpn_sticky_mac;
-				if (debug)
-					zlog_debug(
-						"%s: %s wins over %s due to sticky MAC flag",
-						pfx_buf, new_buf, exist_buf);
-				return 1;
-			}
-
-			if (!newattr->sticky && existattr->sticky) {
-				*reason = bgp_path_selection_evpn_sticky_mac;
-				if (debug)
-					zlog_debug(
-						"%s: %s loses to %s due to sticky MAC flag",
-						pfx_buf, new_buf, exist_buf);
-				return 0;
-			}
-		}
-
-		new_mm_seq = mac_mobility_seqnum(newattr);
-		exist_mm_seq = mac_mobility_seqnum(existattr);
-
-		if (new_mm_seq > exist_mm_seq) {
-			*reason = bgp_path_selection_evpn_seq;
-			if (debug)
-				zlog_debug(
-					"%s: %s wins over %s due to MM seq %u > %u",
-					pfx_buf, new_buf, exist_buf, new_mm_seq,
-					exist_mm_seq);
-			return 1;
-		}
-
-		if (new_mm_seq < exist_mm_seq) {
-			*reason = bgp_path_selection_evpn_seq;
-			if (debug)
-				zlog_debug(
-					"%s: %s loses to %s due to MM seq %u < %u",
-					pfx_buf, new_buf, exist_buf, new_mm_seq,
-					exist_mm_seq);
-			return 0;
-		}
-
-		/*
-		 * if sequence numbers are the same path with the lowest IP
-		 * wins
-		 */
-		nh_cmp = bgp_path_info_nexthop_cmp(new, exist);
-		if (nh_cmp < 0) {
-			*reason = bgp_path_selection_evpn_lower_ip;
-			if (debug)
-				zlog_debug(
-					"%s: %s wins over %s due to same MM seq %u and lower IP %s",
-					pfx_buf, new_buf, exist_buf, new_mm_seq,
-					inet_ntoa(new->attr->nexthop));
-			return 1;
-		}
-		if (nh_cmp > 0) {
-			*reason = bgp_path_selection_evpn_lower_ip;
-			if (debug)
-				zlog_debug(
-					"%s: %s loses to %s due to same MM seq %u and higher IP %s",
-					pfx_buf, new_buf, exist_buf, new_mm_seq,
-					inet_ntoa(new->attr->nexthop));
-			return 0;
-		}
-	}
 
 	/* 1. Weight check. */
 	new_weight = newattr->weight;
@@ -597,19 +487,11 @@ static int bgp_path_info_cmp(struct bgp *bgp, struct bgp_path_info *new,
 
 	if (new_weight > exist_weight) {
 		*reason = bgp_path_selection_weight;
-		if (debug)
-			zlog_debug("%s: %s wins over %s due to weight %d > %d",
-				   pfx_buf, new_buf, exist_buf, new_weight,
-				   exist_weight);
 		return 1;
 	}
 
 	if (new_weight < exist_weight) {
 		*reason = bgp_path_selection_weight;
-		if (debug)
-			zlog_debug("%s: %s loses to %s due to weight %d < %d",
-				   pfx_buf, new_buf, exist_buf, new_weight,
-				   exist_weight);
 		return 0;
 	}
 
@@ -623,21 +505,11 @@ static int bgp_path_info_cmp(struct bgp *bgp, struct bgp_path_info *new,
 
 	if (new_pref > exist_pref) {
 		*reason = bgp_path_selection_local_pref;
-		if (debug)
-			zlog_debug(
-				"%s: %s wins over %s due to localpref %d > %d",
-				pfx_buf, new_buf, exist_buf, new_pref,
-				exist_pref);
 		return 1;
 	}
 
 	if (new_pref < exist_pref) {
 		*reason = bgp_path_selection_local_pref;
-		if (debug)
-			zlog_debug(
-				"%s: %s loses to %s due to localpref %d < %d",
-				pfx_buf, new_buf, exist_buf, new_pref,
-				exist_pref);
 		return 0;
 	}
 
@@ -649,20 +521,12 @@ static int bgp_path_info_cmp(struct bgp *bgp, struct bgp_path_info *new,
 	if (!(new->sub_type == BGP_ROUTE_NORMAL ||
 	      new->sub_type == BGP_ROUTE_IMPORTED)) {
 		*reason = bgp_path_selection_local_route;
-		if (debug)
-			zlog_debug(
-				"%s: %s wins over %s due to preferred BGP_ROUTE type",
-				pfx_buf, new_buf, exist_buf);
 		return 1;
 	}
 
 	if (!(exist->sub_type == BGP_ROUTE_NORMAL ||
 	      exist->sub_type == BGP_ROUTE_IMPORTED)) {
 		*reason = bgp_path_selection_local_route;
-		if (debug)
-			zlog_debug(
-				"%s: %s loses to %s due to preferred BGP_ROUTE type",
-				pfx_buf, new_buf, exist_buf);
 		return 0;
 	}
 
@@ -679,23 +543,11 @@ static int bgp_path_info_cmp(struct bgp *bgp, struct bgp_path_info *new,
 
 			if (aspath_hops < (exist_hops + exist_confeds)) {
 				*reason = bgp_path_selection_confed_as_path;
-				if (debug)
-					zlog_debug(
-						"%s: %s wins over %s due to aspath (with confeds) hopcount %d < %d",
-						pfx_buf, new_buf, exist_buf,
-						aspath_hops,
-						(exist_hops + exist_confeds));
 				return 1;
 			}
 
 			if (aspath_hops > (exist_hops + exist_confeds)) {
 				*reason = bgp_path_selection_confed_as_path;
-				if (debug)
-					zlog_debug(
-						"%s: %s loses to %s due to aspath (with confeds) hopcount %d > %d",
-						pfx_buf, new_buf, exist_buf,
-						aspath_hops,
-						(exist_hops + exist_confeds));
 				return 0;
 			}
 		} else {
@@ -703,21 +555,11 @@ static int bgp_path_info_cmp(struct bgp *bgp, struct bgp_path_info *new,
 
 			if (newhops < exist_hops) {
 				*reason = bgp_path_selection_as_path;
-				if (debug)
-					zlog_debug(
-						"%s: %s wins over %s due to aspath hopcount %d < %d",
-						pfx_buf, new_buf, exist_buf,
-						newhops, exist_hops);
 				return 1;
 			}
 
 			if (newhops > exist_hops) {
 				*reason = bgp_path_selection_as_path;
-				if (debug)
-					zlog_debug(
-						"%s: %s loses to %s due to aspath hopcount %d > %d",
-						pfx_buf, new_buf, exist_buf,
-						newhops, exist_hops);
 				return 0;
 			}
 		}
@@ -726,21 +568,11 @@ static int bgp_path_info_cmp(struct bgp *bgp, struct bgp_path_info *new,
 	/* 5. Origin check. */
 	if (newattr->origin < existattr->origin) {
 		*reason = bgp_path_selection_origin;
-		if (debug)
-			zlog_debug("%s: %s wins over %s due to ORIGIN %s < %s",
-				   pfx_buf, new_buf, exist_buf,
-				   bgp_origin_long_str[newattr->origin],
-				   bgp_origin_long_str[existattr->origin]);
 		return 1;
 	}
 
 	if (newattr->origin > existattr->origin) {
 		*reason = bgp_path_selection_origin;
-		if (debug)
-			zlog_debug("%s: %s loses to %s due to ORIGIN %s > %s",
-				   pfx_buf, new_buf, exist_buf,
-				   bgp_origin_long_str[newattr->origin],
-				   bgp_origin_long_str[existattr->origin]);
 		return 0;
 	}
 
@@ -762,21 +594,11 @@ static int bgp_path_info_cmp(struct bgp *bgp, struct bgp_path_info *new,
 
 		if (new_med < exist_med) {
 			*reason = bgp_path_selection_med;
-			if (debug)
-				zlog_debug(
-					"%s: %s wins over %s due to MED %d < %d",
-					pfx_buf, new_buf, exist_buf, new_med,
-					exist_med);
 			return 1;
 		}
 
 		if (new_med > exist_med) {
 			*reason = bgp_path_selection_med;
-			if (debug)
-				zlog_debug(
-					"%s: %s loses to %s due to MED %d > %d",
-					pfx_buf, new_buf, exist_buf, new_med,
-					exist_med);
 			return 0;
 		}
 	}
@@ -788,20 +610,12 @@ static int bgp_path_info_cmp(struct bgp *bgp, struct bgp_path_info *new,
 	if (new_sort == BGP_PEER_EBGP
 	    && (exist_sort == BGP_PEER_IBGP || exist_sort == BGP_PEER_CONFED)) {
 		*reason = bgp_path_selection_peer;
-		if (debug)
-			zlog_debug(
-				"%s: %s wins over %s due to eBGP peer > iBGP peer",
-				pfx_buf, new_buf, exist_buf);
 		return 1;
 	}
 
 	if (exist_sort == BGP_PEER_EBGP
 	    && (new_sort == BGP_PEER_IBGP || new_sort == BGP_PEER_CONFED)) {
 		*reason = bgp_path_selection_peer;
-		if (debug)
-			zlog_debug(
-				"%s: %s loses to %s due to iBGP peer < eBGP peer",
-				pfx_buf, new_buf, exist_buf);
 		return 0;
 	}
 
@@ -814,18 +628,10 @@ static int bgp_path_info_cmp(struct bgp *bgp, struct bgp_path_info *new,
 		existm = exist->extra->igpmetric;
 
 	if (newm < existm) {
-		if (debug)
-			zlog_debug(
-				"%s: %s wins over %s due to IGP metric %d < %d",
-				pfx_buf, new_buf, exist_buf, newm, existm);
 		ret = 1;
 	}
 
 	if (newm > existm) {
-		if (debug)
-			zlog_debug(
-				"%s: %s loses to %s due to IGP metric %d > %d",
-				pfx_buf, new_buf, exist_buf, newm, existm);
 		ret = 0;
 	}
 
@@ -844,20 +650,10 @@ static int bgp_path_info_cmp(struct bgp *bgp, struct bgp_path_info *new,
 			existm = BGP_CLUSTER_LIST_LENGTH(exist->attr);
 
 			if (newm < existm) {
-				if (debug)
-					zlog_debug(
-						"%s: %s wins over %s due to CLUSTER_LIST length %d < %d",
-						pfx_buf, new_buf, exist_buf,
-						newm, existm);
 				ret = 1;
 			}
 
 			if (newm > existm) {
-				if (debug)
-					zlog_debug(
-						"%s: %s loses to %s due to CLUSTER_LIST length %d > %d",
-						pfx_buf, new_buf, exist_buf,
-						newm, existm);
 				ret = 0;
 			}
 		}
@@ -868,39 +664,19 @@ static int bgp_path_info_cmp(struct bgp *bgp, struct bgp_path_info *new,
 		if (new_sort == BGP_PEER_CONFED
 		    && exist_sort == BGP_PEER_IBGP) {
 			*reason = bgp_path_selection_confed;
-			if (debug)
-				zlog_debug(
-					"%s: %s wins over %s due to confed-external peer > confed-internal peer",
-					pfx_buf, new_buf, exist_buf);
 			return 1;
 		}
 
 		if (exist_sort == BGP_PEER_CONFED
 		    && new_sort == BGP_PEER_IBGP) {
 			*reason = bgp_path_selection_confed;
-			if (debug)
-				zlog_debug(
-					"%s: %s loses to %s due to confed-internal peer < confed-external peer",
-					pfx_buf, new_buf, exist_buf);
 			return 0;
 		}
 	}
 
 	/* 11. Maximum path check. */
 	if (newm == existm) {
-		/* If one path has a label but the other does not, do not treat
-		 * them as equals for multipath
-		 */
-		if ((new->extra &&bgp_is_valid_label(&new->extra->label[0]))
-		    != (exist->extra
-			&& bgp_is_valid_label(&exist->extra->label[0]))) {
-			if (debug)
-				zlog_debug(
-					"%s: %s and %s cannot be multipath, one has a label while the other does not",
-					pfx_buf, new_buf, exist_buf);
-		} else if (bgp_flag_check(bgp,
-					  BGP_FLAG_ASPATH_MULTIPATH_RELAX)) {
-
+		if (bgp_flag_check(bgp, BGP_FLAG_ASPATH_MULTIPATH_RELAX)) {
 			/*
 			 * For the two paths, all comparison steps till IGP
 			 * metric
@@ -915,44 +691,19 @@ static int bgp_path_info_cmp(struct bgp *bgp, struct bgp_path_info *new,
 			 * array.
 			 */
 			*paths_eq = 1;
-
-			if (debug)
-				zlog_debug(
-					"%s: %s and %s are equal via multipath-relax",
-					pfx_buf, new_buf, exist_buf);
 		} else if (new->peer->sort == BGP_PEER_IBGP) {
 			if (aspath_cmp(new->attr->aspath,
 				       exist->attr->aspath)) {
 				*paths_eq = 1;
-
-				if (debug)
-					zlog_debug(
-						"%s: %s and %s are equal via matching aspaths",
-						pfx_buf, new_buf, exist_buf);
 			}
 		} else if (new->peer->as == exist->peer->as) {
 			*paths_eq = 1;
-
-			if (debug)
-				zlog_debug(
-					"%s: %s and %s are equal via same remote-as",
-					pfx_buf, new_buf, exist_buf);
 		}
 	} else {
 		/*
 		 * TODO: If unequal cost ibgp multipath is enabled we can
 		 * mark the paths as equal here instead of returning
 		 */
-		if (debug) {
-			if (ret == 1)
-				zlog_debug(
-					"%s: %s wins over %s after IGP metric comparison",
-					pfx_buf, new_buf, exist_buf);
-			else
-				zlog_debug(
-					"%s: %s loses to %s after IGP metric comparison",
-					pfx_buf, new_buf, exist_buf);
-		}
 		*reason = bgp_path_selection_igp_metric;
 		return ret;
 	}
@@ -965,19 +716,11 @@ static int bgp_path_info_cmp(struct bgp *bgp, struct bgp_path_info *new,
 	    && new_sort == BGP_PEER_EBGP && exist_sort == BGP_PEER_EBGP) {
 		if (CHECK_FLAG(new->flags, BGP_PATH_SELECTED)) {
 			*reason = bgp_path_selection_older;
-			if (debug)
-				zlog_debug(
-					"%s: %s wins over %s due to oldest external",
-					pfx_buf, new_buf, exist_buf);
 			return 1;
 		}
 
 		if (CHECK_FLAG(exist->flags, BGP_PATH_SELECTED)) {
 			*reason = bgp_path_selection_older;
-			if (debug)
-				zlog_debug(
-					"%s: %s loses to %s due to oldest external",
-					pfx_buf, new_buf, exist_buf);
 			return 0;
 		}
 	}
@@ -998,19 +741,11 @@ static int bgp_path_info_cmp(struct bgp *bgp, struct bgp_path_info *new,
 
 	if (ntohl(new_id.s_addr) < ntohl(exist_id.s_addr)) {
 		*reason = bgp_path_selection_router_id;
-		if (debug)
-			zlog_debug(
-				"%s: %s wins over %s due to Router-ID comparison",
-				pfx_buf, new_buf, exist_buf);
 		return 1;
 	}
 
 	if (ntohl(new_id.s_addr) > ntohl(exist_id.s_addr)) {
 		*reason = bgp_path_selection_router_id;
-		if (debug)
-			zlog_debug(
-				"%s: %s loses to %s due to Router-ID comparison",
-				pfx_buf, new_buf, exist_buf);
 		return 0;
 	}
 
@@ -1020,21 +755,11 @@ static int bgp_path_info_cmp(struct bgp *bgp, struct bgp_path_info *new,
 
 	if (new_cluster < exist_cluster) {
 		*reason = bgp_path_selection_cluster_length;
-		if (debug)
-			zlog_debug(
-				"%s: %s wins over %s due to CLUSTER_LIST length %d < %d",
-				pfx_buf, new_buf, exist_buf, new_cluster,
-				exist_cluster);
 		return 1;
 	}
 
 	if (new_cluster > exist_cluster) {
 		*reason = bgp_path_selection_cluster_length;
-		if (debug)
-			zlog_debug(
-				"%s: %s loses to %s due to CLUSTER_LIST length %d > %d",
-				pfx_buf, new_buf, exist_buf, new_cluster,
-				exist_cluster);
 		return 0;
 	}
 
@@ -1044,19 +769,11 @@ static int bgp_path_info_cmp(struct bgp *bgp, struct bgp_path_info *new,
 	 */
 	if (CHECK_FLAG(exist->flags, BGP_PATH_STALE)) {
 		*reason = bgp_path_selection_stale;
-		if (debug)
-			zlog_debug(
-				"%s: %s wins over %s due to latter path being STALE",
-				pfx_buf, new_buf, exist_buf);
 		return 1;
 	}
 
 	if (CHECK_FLAG(new->flags, BGP_PATH_STALE)) {
 		*reason = bgp_path_selection_stale;
-		if (debug)
-			zlog_debug(
-				"%s: %s loses to %s due to former path being STALE",
-				pfx_buf, new_buf, exist_buf);
 		return 0;
 	}
 
@@ -1074,27 +791,15 @@ static int bgp_path_info_cmp(struct bgp *bgp, struct bgp_path_info *new,
 
 	if (ret == 1) {
 		*reason = bgp_path_selection_neighbor_ip;
-		if (debug)
-			zlog_debug(
-				"%s: %s loses to %s due to Neighor IP comparison",
-				pfx_buf, new_buf, exist_buf);
 		return 0;
 	}
 
 	if (ret == -1) {
 		*reason = bgp_path_selection_neighbor_ip;
-		if (debug)
-			zlog_debug(
-				"%s: %s wins over %s due to Neighor IP comparison",
-				pfx_buf, new_buf, exist_buf);
 		return 1;
 	}
 
 	*reason = bgp_path_selection_default;
-	if (debug)
-		zlog_debug("%s: %s wins over %s due to nothing left to compare",
-			   pfx_buf, new_buf, exist_buf);
-
 	return 1;
 }
 
@@ -1987,80 +1692,6 @@ void bgp_best_selection(struct bgp *bgp, struct bgp_node *rn,
 	if (debug)
 		prefix2str(&rn->p, pfx_buf, sizeof(pfx_buf));
 
-	/* bgp deterministic-med */
-	new_select = NULL;
-	if (bgp_flag_check(bgp, BGP_FLAG_DETERMINISTIC_MED)) {
-
-		/* Clear BGP_PATH_DMED_SELECTED for all paths */
-		for (pi1 = bgp_node_get_bgp_path_info(rn); pi1;
-		     pi1 = pi1->next)
-			bgp_path_info_unset_flag(rn, pi1,
-						 BGP_PATH_DMED_SELECTED);
-
-		for (pi1 = bgp_node_get_bgp_path_info(rn); pi1;
-		     pi1 = pi1->next) {
-			if (CHECK_FLAG(pi1->flags, BGP_PATH_DMED_CHECK))
-				continue;
-			if (BGP_PATH_HOLDDOWN(pi1))
-				continue;
-			if (pi1->peer != bgp->peer_self)
-				if (pi1->peer->status != Established)
-					continue;
-
-			new_select = pi1;
-			if (pi1->next) {
-				for (pi2 = pi1->next; pi2; pi2 = pi2->next) {
-					if (CHECK_FLAG(pi2->flags,
-						       BGP_PATH_DMED_CHECK))
-						continue;
-					if (BGP_PATH_HOLDDOWN(pi2))
-						continue;
-					if (pi2->peer != bgp->peer_self
-					    && !CHECK_FLAG(
-						    pi2->peer->sflags,
-						    PEER_STATUS_NSF_WAIT))
-						if (pi2->peer->status
-						    != Established)
-							continue;
-
-					if (!aspath_cmp_left(pi1->attr->aspath,
-							     pi2->attr->aspath)
-					    && !aspath_cmp_left_confed(
-						       pi1->attr->aspath,
-						       pi2->attr->aspath))
-						continue;
-
-					if (bgp_path_info_cmp(
-						    bgp, pi2, new_select,
-						    &paths_eq, mpath_cfg, debug,
-						    pfx_buf, afi, safi,
-						    &rn->reason)) {
-						bgp_path_info_unset_flag(
-							rn, new_select,
-							BGP_PATH_DMED_SELECTED);
-						new_select = pi2;
-					}
-
-					bgp_path_info_set_flag(
-						rn, pi2, BGP_PATH_DMED_CHECK);
-				}
-			}
-			bgp_path_info_set_flag(rn, new_select,
-					       BGP_PATH_DMED_CHECK);
-			bgp_path_info_set_flag(rn, new_select,
-					       BGP_PATH_DMED_SELECTED);
-
-			if (debug) {
-				bgp_path_info_path_with_addpath_rx_str(
-					new_select, path_buf);
-				zlog_debug("%s: %s is the bestpath from AS %u",
-					   pfx_buf, path_buf,
-					   aspath_get_first_as(
-						   new_select->attr->aspath));
-			}
-		}
-	}
-
 	/* Check old selected route and new selected route. */
 	old_select = NULL;
 	new_select = NULL;
@@ -2077,34 +1708,14 @@ void bgp_best_selection(struct bgp *bgp, struct bgp_node *rn,
 			    && (pi != old_select))
 				bgp_path_info_reap(rn, pi);
 
-			if (debug)
-				zlog_debug("%s: pi %p in holddown", __func__,
-					   pi);
-
 			continue;
 		}
 
 		if (pi->peer && pi->peer != bgp->peer_self
 		    && !CHECK_FLAG(pi->peer->sflags, PEER_STATUS_NSF_WAIT))
 			if (pi->peer->status != Established) {
-
-				if (debug)
-					zlog_debug(
-						"%s: pi %p non self peer %s not estab state",
-						__func__, pi, pi->peer->host);
-
 				continue;
 			}
-
-		if (bgp_flag_check(bgp, BGP_FLAG_DETERMINISTIC_MED)
-		    && (!CHECK_FLAG(pi->flags, BGP_PATH_DMED_SELECTED))) {
-			bgp_path_info_unset_flag(rn, pi, BGP_PATH_DMED_CHECK);
-			if (debug)
-				zlog_debug("%s: pi %p dmed", __func__, pi);
-			continue;
-		}
-
-		bgp_path_info_unset_flag(rn, pi, BGP_PATH_DMED_CHECK);
 
 		if (bgp_path_info_cmp(bgp, pi, new_select, &paths_eq, mpath_cfg,
 				      debug, pfx_buf, afi, safi, &rn->reason)) {
@@ -2112,35 +1723,11 @@ void bgp_best_selection(struct bgp *bgp, struct bgp_node *rn,
 		}
 	}
 
-	/* Now that we know which path is the bestpath see if any of the other
-	 * paths
-	 * qualify as multipaths
-	 */
-	if (debug) {
-		if (new_select)
-			bgp_path_info_path_with_addpath_rx_str(new_select,
-							       path_buf);
-		else
-			sprintf(path_buf, "NONE");
-		zlog_debug(
-			"%s: After path selection, newbest is %s oldbest was %s",
-			pfx_buf, path_buf,
-			old_select ? old_select->peer->host : "NONE");
-	}
-
 	if (do_mpath && new_select) {
 		for (pi = bgp_node_get_bgp_path_info(rn);
 		     (pi != NULL) && (nextpi = pi->next, 1); pi = nextpi) {
 
-			if (debug)
-				bgp_path_info_path_with_addpath_rx_str(
-					pi, path_buf);
-
 			if (pi == new_select) {
-				if (debug)
-					zlog_debug(
-						"%s: %s is the bestpath, add to the multipath list",
-						pfx_buf, path_buf);
 				bgp_mp_list_add(&mp_list, pi);
 				continue;
 			}
@@ -2155,10 +1742,6 @@ void bgp_best_selection(struct bgp *bgp, struct bgp_node *rn,
 					continue;
 
 			if (!bgp_path_info_nexthop_cmp(pi, new_select)) {
-				if (debug)
-					zlog_debug(
-						"%s: %s has the same nexthop as the bestpath, skip it",
-						pfx_buf, path_buf);
 				continue;
 			}
 
@@ -2167,10 +1750,6 @@ void bgp_best_selection(struct bgp *bgp, struct bgp_node *rn,
 					  &rn->reason);
 
 			if (paths_eq) {
-				if (debug)
-					zlog_debug(
-						"%s: %s is equivalent to the bestpath, add to the multipath list",
-						pfx_buf, path_buf);
 				bgp_mp_list_add(&mp_list, pi);
 			}
 		}
@@ -2185,8 +1764,6 @@ void bgp_best_selection(struct bgp *bgp, struct bgp_node *rn,
 
 	result->old = old_select;
 	result->new = new_select;
-
-	return;
 }
 
 /*
@@ -2329,17 +1906,6 @@ static void bgp_process_main_one(struct bgp *bgp, struct bgp_node *rn,
 	char pfx_buf[PREFIX2STR_BUFFER];
 	int debug = 0;
 
-	if (bgp_flag_check(bgp, BGP_FLAG_DELETE_IN_PROGRESS)) {
-		if (rn)
-			debug = bgp_debug_bestpath(&rn->p);
-		if (debug) {
-			prefix2str(&rn->p, pfx_buf, sizeof(pfx_buf));
-			zlog_debug(
-			     "%s: bgp delete in progress, ignoring event, p=%s",
-			     __func__, pfx_buf);
-		}
-		return;
-	}
 	/* Is it end of initial update? (after startup) */
 	if (!rn) {
 		quagga_timestamp(3, bgp->update_delay_zebra_resume_time,
@@ -2358,66 +1924,11 @@ static void bgp_process_main_one(struct bgp *bgp, struct bgp_node *rn,
 
 	struct prefix *p = &rn->p;
 
-	debug = bgp_debug_bestpath(&rn->p);
-	if (debug) {
-		prefix2str(&rn->p, pfx_buf, sizeof(pfx_buf));
-		zlog_debug("%s: p=%s afi=%s, safi=%s start", __func__, pfx_buf,
-			   afi2str(afi), safi2str(safi));
-	}
-
 	/* Best path selection. */
 	bgp_best_selection(bgp, rn, &bgp->maxpaths[afi][safi], &old_and_new,
 			   afi, safi);
 	old_select = old_and_new.old;
 	new_select = old_and_new.new;
-
-	/* Do we need to allocate or free labels?
-	 * Right now, since we only deal with per-prefix labels, it is not
-	 * necessary to do this upon changes to best path. Exceptions:
-	 * - label index has changed -> recalculate resulting label
-	 * - path_info sub_type changed -> switch to/from implicit-null
-	 * - no valid label (due to removed static label binding) -> get new one
-	 */
-	if (bgp->allocate_mpls_labels[afi][safi]) {
-		if (new_select) {
-			if (!old_select
-			    || bgp_label_index_differs(new_select, old_select)
-			    || new_select->sub_type != old_select->sub_type
-			    || !bgp_is_valid_label(&rn->local_label)) {
-				/* Enforced penultimate hop popping:
-				 * implicit-null for local routes, aggregate
-				 * and redistributed routes
-				 */
-				if (new_select->sub_type == BGP_ROUTE_STATIC
-				    || new_select->sub_type
-						== BGP_ROUTE_AGGREGATE
-				    || new_select->sub_type
-						== BGP_ROUTE_REDISTRIBUTE) {
-					if (CHECK_FLAG(
-						    rn->flags,
-						    BGP_NODE_REGISTERED_FOR_LABEL))
-						bgp_unregister_for_label(rn);
-					label_ntop(MPLS_LABEL_IMPLICIT_NULL, 1,
-						   &rn->local_label);
-					bgp_set_valid_label(&rn->local_label);
-				} else
-					bgp_register_for_label(rn, new_select);
-			}
-		} else if (CHECK_FLAG(rn->flags,
-				      BGP_NODE_REGISTERED_FOR_LABEL)) {
-			bgp_unregister_for_label(rn);
-		}
-	} else if (CHECK_FLAG(rn->flags, BGP_NODE_REGISTERED_FOR_LABEL)) {
-		bgp_unregister_for_label(rn);
-	}
-
-	if (debug) {
-		prefix2str(&rn->p, pfx_buf, sizeof(pfx_buf));
-		zlog_debug(
-			"%s: p=%s afi=%s, safi=%s, old_select=%p, new_select=%p",
-			__func__, pfx_buf, afi2str(afi), safi2str(safi),
-			old_select, new_select);
-	}
 
 	/* If best route remains the same and this is not due to user-initiated
 	 * clear, see exactly what needs to be done.
@@ -2427,10 +1938,6 @@ static void bgp_process_main_one(struct bgp *bgp, struct bgp_node *rn,
 	    && !CHECK_FLAG(old_select->flags, BGP_PATH_ATTR_CHANGED)
 	    && !bgp_addpath_is_addpath_used(&bgp->tx_addpath, afi, safi)) {
 		if (bgp_zebra_has_route_changed(rn, old_select)) {
-#if ENABLE_BGP_VNC
-			vnc_import_bgp_add_route(bgp, p, old_select);
-			vnc_import_bgp_exterior_add_route(bgp, p, old_select);
-#endif
 			if (bgp_fibupd_safi(safi)
 			    && !bgp_option_check(BGP_OPT_NO_FIB)) {
 
@@ -2495,30 +2002,7 @@ static void bgp_process_main_one(struct bgp *bgp, struct bgp_node *rn,
 		UNSET_FLAG(new_select->flags, BGP_PATH_MULTIPATH_CHG);
 	}
 
-#if ENABLE_BGP_VNC
-	if ((afi == AFI_IP || afi == AFI_IP6) && (safi == SAFI_UNICAST)) {
-		if (old_select != new_select) {
-			if (old_select) {
-				vnc_import_bgp_exterior_del_route(bgp, p,
-								  old_select);
-				vnc_import_bgp_del_route(bgp, p, old_select);
-			}
-			if (new_select) {
-				vnc_import_bgp_exterior_add_route(bgp, p,
-								  new_select);
-				vnc_import_bgp_add_route(bgp, p, new_select);
-			}
-		}
-	}
-#endif
-
 	group_announce_route(bgp, afi, safi, rn, new_select);
-
-	/* unicast routes must also be annouced to labeled-unicast update-groups
-	 */
-	if (safi == SAFI_UNICAST)
-		group_announce_route(bgp, afi, SAFI_LABELED_UNICAST, rn,
-				     new_select);
 
 	/* FIB update. */
 	if (bgp_fibupd_safi(safi) && (bgp->inst_type != BGP_INSTANCE_TYPE_VIEW)
@@ -2546,39 +2030,6 @@ static void bgp_process_main_one(struct bgp *bgp, struct bgp_node *rn,
 
 				bgp_zebra_withdraw(p, old_select, bgp, safi);
 		}
-	}
-
-	/* advertise/withdraw type-5 routes */
-	if ((afi == AFI_IP || afi == AFI_IP6) && (safi == SAFI_UNICAST)) {
-		if (advertise_type5_routes(bgp, afi) &&
-		    new_select &&
-		    is_route_injectable_into_evpn(new_select)) {
-
-			/* apply the route-map */
-			if (bgp->adv_cmd_rmap[afi][safi].map) {
-				route_map_result_t ret;
-
-				ret = route_map_apply(
-					bgp->adv_cmd_rmap[afi][safi].map,
-					&rn->p, RMAP_BGP, new_select);
-				if (ret == RMAP_PERMITMATCH)
-					bgp_evpn_advertise_type5_route(
-						bgp, &rn->p, new_select->attr,
-						afi, safi);
-				else
-					bgp_evpn_withdraw_type5_route(
-						bgp, &rn->p, afi, safi);
-			} else {
-				bgp_evpn_advertise_type5_route(bgp,
-							       &rn->p,
-							       new_select->attr,
-							       afi, safi);
-
-			}
-		} else if (advertise_type5_routes(bgp, afi) &&
-			   old_select &&
-			   is_route_injectable_into_evpn(old_select))
-			bgp_evpn_withdraw_type5_route(bgp, &rn->p, afi, safi);
 	}
 
 	/* Clear any route change flags. */
@@ -3048,9 +2499,6 @@ int bgp_update(struct peer *peer, struct prefix *p, uint32_t addpath_id,
 	int connected = 0;
 	int do_loop_check = 1;
 	int has_valid_label = 0;
-#if ENABLE_BGP_VNC
-	int vnc_implicit_withdraw = 0;
-#endif
 	int same_attr = 0;
 
 	memset(&new_attr, 0, sizeof(struct attr));
@@ -3059,11 +2507,7 @@ int bgp_update(struct peer *peer, struct prefix *p, uint32_t addpath_id,
 
 	bgp = peer->bgp;
 	rn = bgp_afi_node_get(bgp->rib[afi][safi], afi, safi, p, prd);
-	/* TODO: Check to see if we can get rid of "is_valid_label" */
-	if (afi == AFI_L2VPN && safi == SAFI_EVPN)
-		has_valid_label = (num_labels > 0) ? 1 : 0;
-	else
-		has_valid_label = bgp_is_valid_label(label);
+	has_valid_label = bgp_is_valid_label(label);
 
 	/* When peer's soft reconfiguration enabled.  Record input packet in
 	   Adj-RIBs-In.  */
@@ -3225,16 +2669,6 @@ int bgp_update(struct peer *peer, struct prefix *p, uint32_t addpath_id,
 				       BGP_CONFIG_DAMPENING)
 			    && peer->sort == BGP_PEER_EBGP
 			    && CHECK_FLAG(pi->flags, BGP_PATH_HISTORY)) {
-				if (bgp_debug_update(peer, p, NULL, 1)) {
-					bgp_debug_rdpfxpath2str(
-						afi, safi, prd, p, label,
-						num_labels, addpath_id ? 1 : 0,
-						addpath_id, pfx_buf,
-						sizeof(pfx_buf));
-					zlog_debug("%s rcvd %s", peer->host,
-						   pfx_buf);
-				}
-
 				if (bgp_damp_update(pi, rn, afi, safi)
 				    != BGP_DAMP_SUPPRESSED) {
 					bgp_aggregate_increment(bgp, p, pi, afi,
@@ -3243,25 +2677,6 @@ int bgp_update(struct peer *peer, struct prefix *p, uint32_t addpath_id,
 				}
 			} else /* Duplicate - odd */
 			{
-				if (bgp_debug_update(peer, p, NULL, 1)) {
-					if (!peer->rcvd_attr_printed) {
-						zlog_debug(
-							"%s rcvd UPDATE w/ attr: %s",
-							peer->host,
-							peer->rcvd_attr_str);
-						peer->rcvd_attr_printed = 1;
-					}
-
-					bgp_debug_rdpfxpath2str(
-						afi, safi, prd, p, label,
-						num_labels, addpath_id ? 1 : 0,
-						addpath_id, pfx_buf,
-						sizeof(pfx_buf));
-					zlog_debug(
-						"%s rcvd %s...duplicate ignored",
-						peer->host, pfx_buf);
-				}
-
 				/* graceful restart STALE flag unset. */
 				if (CHECK_FLAG(pi->flags, BGP_PATH_STALE)) {
 					bgp_path_info_unset_flag(
@@ -3291,15 +2706,6 @@ int bgp_update(struct peer *peer, struct prefix *p, uint32_t addpath_id,
 			bgp_path_info_restore(rn, pi);
 		}
 
-		/* Received Logging. */
-		if (bgp_debug_update(peer, p, NULL, 1)) {
-			bgp_debug_rdpfxpath2str(afi, safi, prd, p, label,
-						num_labels, addpath_id ? 1 : 0,
-						addpath_id, pfx_buf,
-						sizeof(pfx_buf));
-			zlog_debug("%s rcvd %s", peer->host, pfx_buf);
-		}
-
 		/* graceful restart STALE flag unset. */
 		if (CHECK_FLAG(pi->flags, BGP_PATH_STALE))
 			bgp_path_info_unset_flag(rn, pi, BGP_PATH_STALE);
@@ -3321,108 +2727,10 @@ int bgp_update(struct peer *peer, struct prefix *p, uint32_t addpath_id,
 			if (!CHECK_FLAG(pi->flags, BGP_PATH_HISTORY))
 				bgp_damp_withdraw(pi, rn, afi, safi, 1);
 		}
-#if ENABLE_BGP_VNC
-		if (safi == SAFI_MPLS_VPN) {
-			struct bgp_node *prn = NULL;
-			struct bgp_table *table = NULL;
-
-			prn = bgp_node_get(bgp->rib[afi][safi],
-					   (struct prefix *)prd);
-			if (bgp_node_has_bgp_path_info_data(prn)) {
-				table = bgp_node_get_bgp_table_info(prn);
-
-				vnc_import_bgp_del_vnc_host_route_mode_resolve_nve(
-					bgp, prd, table, p, pi);
-			}
-			bgp_unlock_node(prn);
-		}
-		if ((afi == AFI_IP || afi == AFI_IP6)
-		    && (safi == SAFI_UNICAST)) {
-			if (CHECK_FLAG(pi->flags, BGP_PATH_SELECTED)) {
-				/*
-				 * Implicit withdraw case.
-				 */
-				++vnc_implicit_withdraw;
-				vnc_import_bgp_del_route(bgp, p, pi);
-				vnc_import_bgp_exterior_del_route(bgp, p, pi);
-			}
-		}
-#endif
-
-		/* Special handling for EVPN update of an existing route. If the
-		 * extended community attribute has changed, we need to
-		 * un-import
-		 * the route using its existing extended community. It will be
-		 * subsequently processed for import with the new extended
-		 * community.
-		 */
-		if (safi == SAFI_EVPN && !same_attr) {
-			if ((pi->attr->flag
-			     & ATTR_FLAG_BIT(BGP_ATTR_EXT_COMMUNITIES))
-			    && (attr_new->flag
-				& ATTR_FLAG_BIT(BGP_ATTR_EXT_COMMUNITIES))) {
-				int cmp;
-
-				cmp = ecommunity_cmp(pi->attr->ecommunity,
-						     attr_new->ecommunity);
-				if (!cmp) {
-					if (bgp_debug_update(peer, p, NULL, 1))
-						zlog_debug(
-							"Change in EXT-COMM, existing %s new %s",
-							ecommunity_str(
-								pi->attr->ecommunity),
-							ecommunity_str(
-								attr_new->ecommunity));
-					bgp_evpn_unimport_route(bgp, afi, safi,
-								p, pi);
-				}
-			}
-		}
 
 		/* Update to new attribute.  */
 		bgp_attr_unintern(&pi->attr);
 		pi->attr = attr_new;
-
-		/* Update MPLS label */
-		if (has_valid_label) {
-			extra = bgp_path_info_extra_get(pi);
-			if (extra->label != label) {
-				memcpy(&extra->label, label,
-				       num_labels * sizeof(mpls_label_t));
-				extra->num_labels = num_labels;
-			}
-			if (!(afi == AFI_L2VPN && safi == SAFI_EVPN))
-				bgp_set_valid_label(&extra->label[0]);
-		}
-
-#if ENABLE_BGP_VNC
-		if ((afi == AFI_IP || afi == AFI_IP6)
-		    && (safi == SAFI_UNICAST)) {
-			if (vnc_implicit_withdraw) {
-				/*
-				 * Add back the route with its new attributes
-				 * (e.g., nexthop).
-				 * The route is still selected, until the route
-				 * selection
-				 * queued by bgp_process actually runs. We have
-				 * to make this
-				 * update to the VNC side immediately to avoid
-				 * racing against
-				 * configuration changes (e.g., route-map
-				 * changes) which
-				 * trigger re-importation of the entire RIB.
-				 */
-				vnc_import_bgp_add_route(bgp, p, pi);
-				vnc_import_bgp_exterior_add_route(bgp, p, pi);
-			}
-		}
-#endif
-		/* Update Overlay Index */
-		if (afi == AFI_L2VPN) {
-			overlay_index_update(
-				pi->attr, evpn == NULL ? NULL : &evpn->eth_s_id,
-				evpn == NULL ? NULL : &evpn->gw_ip);
-		}
 
 		/* Update bgp route dampening information.  */
 		if (CHECK_FLAG(bgp->af_flags[afi][safi], BGP_CONFIG_DAMPENING)
@@ -3473,38 +2781,6 @@ int bgp_update(struct peer *peer, struct prefix *p, uint32_t addpath_id,
 		} else
 			bgp_path_info_set_flag(rn, pi, BGP_PATH_VALID);
 
-#if ENABLE_BGP_VNC
-		if (safi == SAFI_MPLS_VPN) {
-			struct bgp_node *prn = NULL;
-			struct bgp_table *table = NULL;
-
-			prn = bgp_node_get(bgp->rib[afi][safi],
-					   (struct prefix *)prd);
-			if (bgp_node_has_bgp_path_info_data(prn)) {
-				table = bgp_node_get_bgp_table_info(prn);
-
-				vnc_import_bgp_add_vnc_host_route_mode_resolve_nve(
-					bgp, prd, table, p, pi);
-			}
-			bgp_unlock_node(prn);
-		}
-#endif
-
-		/* If this is an EVPN route and some attribute has changed,
-		 * process
-		 * route for import. If the extended community has changed, we
-		 * would
-		 * have done the un-import earlier and the import would result
-		 * in the
-		 * route getting injected into appropriate L2 VNIs. If it is
-		 * just
-		 * some other attribute change, the import will result in
-		 * updating
-		 * the attributes for the route in the VNI(s).
-		 */
-		if (safi == SAFI_EVPN && !same_attr)
-			bgp_evpn_import_route(bgp, afi, safi, p, pi);
-
 		/* Process change. */
 		bgp_aggregate_increment(bgp, p, pi, afi, safi);
 
@@ -3517,63 +2793,13 @@ int bgp_update(struct peer *peer, struct prefix *p, uint32_t addpath_id,
 
 			vpn_leak_from_vrf_update(bgp_get_default(), bgp, pi);
 		}
-		if ((SAFI_MPLS_VPN == safi)
-		    && (bgp->inst_type == BGP_INSTANCE_TYPE_DEFAULT)) {
-
-			vpn_leak_to_vrf_update(bgp, pi);
-		}
-
-#if ENABLE_BGP_VNC
-		if (SAFI_MPLS_VPN == safi) {
-			mpls_label_t label_decoded = decode_label(label);
-
-			rfapiProcessUpdate(peer, NULL, p, prd, attr, afi, safi,
-					   type, sub_type, &label_decoded);
-		}
-		if (SAFI_ENCAP == safi) {
-			rfapiProcessUpdate(peer, NULL, p, prd, attr, afi, safi,
-					   type, sub_type, NULL);
-		}
-#endif
 
 		return 0;
 	} // End of implicit withdraw
 
-	/* Received Logging. */
-	if (bgp_debug_update(peer, p, NULL, 1)) {
-		if (!peer->rcvd_attr_printed) {
-			zlog_debug("%s rcvd UPDATE w/ attr: %s", peer->host,
-				   peer->rcvd_attr_str);
-			peer->rcvd_attr_printed = 1;
-		}
-
-		bgp_debug_rdpfxpath2str(afi, safi, prd, p, label, num_labels,
-					addpath_id ? 1 : 0, addpath_id, pfx_buf,
-					sizeof(pfx_buf));
-		zlog_debug("%s rcvd %s", peer->host, pfx_buf);
-	}
-
 	/* Make new BGP info. */
 	new = info_make(type, sub_type, 0, peer, attr_new, rn);
 
-	/* Update MPLS label */
-	if (has_valid_label) {
-		extra = bgp_path_info_extra_get(new);
-		if (extra->label != label) {
-			memcpy(&extra->label, label,
-			       num_labels * sizeof(mpls_label_t));
-			extra->num_labels = num_labels;
-		}
-		if (!(afi == AFI_L2VPN && safi == SAFI_EVPN))
-			bgp_set_valid_label(&extra->label[0]);
-	}
-
-	/* Update Overlay Index */
-	if (afi == AFI_L2VPN) {
-		overlay_index_update(new->attr,
-				     evpn == NULL ? NULL : &evpn->eth_s_id,
-				     evpn == NULL ? NULL : &evpn->gw_ip);
-	}
 	/* Nexthop reachability check. */
 	if ((afi == AFI_IP || afi == AFI_IP6)
 	    && (safi == SAFI_UNICAST || safi == SAFI_LABELED_UNICAST)) {
@@ -3589,14 +2815,6 @@ int bgp_update(struct peer *peer, struct prefix *p, uint32_t addpath_id,
 		    || CHECK_FLAG(peer->flags, PEER_FLAG_IS_RFAPI_HD))
 			bgp_path_info_set_flag(rn, new, BGP_PATH_VALID);
 		else {
-			if (BGP_DEBUG(nht, NHT)) {
-				char buf1[INET6_ADDRSTRLEN];
-				inet_ntop(AF_INET,
-					  (const void *)&attr_new->nexthop,
-					  buf1, INET6_ADDRSTRLEN);
-				zlog_debug("%s(%s): NH unresolved",
-					   __FUNCTION__, buf1);
-			}
 			bgp_path_info_unset_flag(rn, new, BGP_PATH_VALID);
 		}
 	} else
@@ -3613,22 +2831,6 @@ int bgp_update(struct peer *peer, struct prefix *p, uint32_t addpath_id,
 
 	/* route_node_get lock */
 	bgp_unlock_node(rn);
-
-#if ENABLE_BGP_VNC
-	if (safi == SAFI_MPLS_VPN) {
-		struct bgp_node *prn = NULL;
-		struct bgp_table *table = NULL;
-
-		prn = bgp_node_get(bgp->rib[afi][safi], (struct prefix *)prd);
-		if (bgp_node_has_bgp_path_info_data(prn)) {
-			table = bgp_node_get_bgp_table_info(prn);
-
-			vnc_import_bgp_add_vnc_host_route_mode_resolve_nve(
-				bgp, prd, table, p, new);
-		}
-		bgp_unlock_node(prn);
-	}
-#endif
 
 	/* If maximum prefix count is configured and current prefix
 	   count exeed it. */
@@ -3649,23 +2851,6 @@ int bgp_update(struct peer *peer, struct prefix *p, uint32_t addpath_id,
 		|| bgp->inst_type == BGP_INSTANCE_TYPE_DEFAULT)) {
 		vpn_leak_from_vrf_update(bgp_get_default(), bgp, new);
 	}
-	if ((SAFI_MPLS_VPN == safi)
-	    && (bgp->inst_type == BGP_INSTANCE_TYPE_DEFAULT)) {
-
-		vpn_leak_to_vrf_update(bgp, new);
-	}
-#if ENABLE_BGP_VNC
-	if (SAFI_MPLS_VPN == safi) {
-		mpls_label_t label_decoded = decode_label(label);
-
-		rfapiProcessUpdate(peer, NULL, p, prd, attr, afi, safi, type,
-				   sub_type, &label_decoded);
-	}
-	if (SAFI_ENCAP == safi) {
-		rfapiProcessUpdate(peer, NULL, p, prd, attr, afi, safi, type,
-				   sub_type, NULL);
-	}
-#endif
 
 	return 0;
 
@@ -3674,55 +2859,18 @@ int bgp_update(struct peer *peer, struct prefix *p, uint32_t addpath_id,
 filtered:
 	hook_call(bgp_process, bgp, afi, safi, rn, peer, true);
 
-	if (bgp_debug_update(peer, p, NULL, 1)) {
-		if (!peer->rcvd_attr_printed) {
-			zlog_debug("%s rcvd UPDATE w/ attr: %s", peer->host,
-				   peer->rcvd_attr_str);
-			peer->rcvd_attr_printed = 1;
-		}
-
-		bgp_debug_rdpfxpath2str(afi, safi, prd, p, label, num_labels,
-					addpath_id ? 1 : 0, addpath_id, pfx_buf,
-					sizeof(pfx_buf));
-		zlog_debug("%s rcvd UPDATE about %s -- DENIED due to: %s",
-			   peer->host, pfx_buf, reason);
-	}
-
 	if (pi) {
-		/* If this is an EVPN route, un-import it as it is now filtered.
-		 */
-		if (safi == SAFI_EVPN)
-			bgp_evpn_unimport_route(bgp, afi, safi, p, pi);
-
 		if (SAFI_UNICAST == safi
 		    && (bgp->inst_type == BGP_INSTANCE_TYPE_VRF
 			|| bgp->inst_type == BGP_INSTANCE_TYPE_DEFAULT)) {
 
 			vpn_leak_from_vrf_withdraw(bgp_get_default(), bgp, pi);
 		}
-		if ((SAFI_MPLS_VPN == safi)
-		    && (bgp->inst_type == BGP_INSTANCE_TYPE_DEFAULT)) {
-
-			vpn_leak_to_vrf_withdraw(bgp, pi);
-		}
 
 		bgp_rib_remove(rn, pi, peer, afi, safi);
 	}
 
 	bgp_unlock_node(rn);
-
-#if ENABLE_BGP_VNC
-	/*
-	 * Filtered update is treated as an implicit withdrawal (see
-	 * bgp_rib_remove()
-	 * a few lines above)
-	 */
-	if ((SAFI_MPLS_VPN == safi) || (SAFI_ENCAP == safi)) {
-		rfapiProcessWithdraw(peer, NULL, p, prd, NULL, afi, safi, type,
-				     0);
-	}
-#endif
-
 	return 0;
 }
 
